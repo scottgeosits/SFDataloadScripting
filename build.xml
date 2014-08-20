@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="Tasks for import and export of Salesforce data" basedir="." xmlns:sf="antlib:com.salesforce">
+	
+    <!-- these can be overwritten in your property file -->
+    <property name="dataLoaderAPIVersion" value="29.0.0" />
+
+    <!-- Define required jars-->
+    <path id="taskDependencies">
+        <pathelement location="./lib/ant.jar"/>
+    </path>
+
+    <property environment="env"/>
+
+    <macrodef name="sfUpsert">
+        <attribute name="object"/>
+	<attribute name="basedir"/>
+	<attribute name="orgname"/>
+	<attribute name="username"/>
+	<attribute name="password"/>
+	<attribute name="orgserver"/>
+	<attribute name="externalIdField"/>
+	<attribute name="dataLoaderAPIVersion"/>
+
+	<sequential>
+	    <echo message="Upserting @{object}"/>
+	    <mkdir dir="@{basedir}/orgs/@{orgname}/data"/>
+	    <copy file="@{basedir}/datascripts/template-upsert-process-conf.xml" tofile="@{basedir}/orgs/@{orgname}/data/process-conf.xml" overwrite="true" failonerror="true"/>
+	    <replace file="@{basedir}/orgs/@{orgname}/data/process-conf.xml">
+	        <replacefilter token="_ORGSERVER_" value="@{orgserver}"/>
+	        <replacefilter token="_USERNAME_" value="@{username}"/>
+	        <replacefilter token="_ENCRYPTED_PASSWORD_" value="@{password}"/>
+	        <replacefilter token="_ENCRYPTION_KEY_FILE_" value="@{basedir}/datascripts/dataloader_encryption_key.txt"/>
+	        <replacefilter token="_DEBUG_MSG_FILE_" value="@{basedir}/orgs/@{orgname}/data/debug.log"/>
+	        <replacefilter token="_OBJECT_" value="@{object}"/>
+	        <replacefilter token="_DATA_FILENAME_" value="@{basedir}/datascripts/datafiles/@{object}Insert.csv"/>
+	        <replacefilter token="_MAPPING_FILE_" value="@{basedir}/datascripts/mappingfiles/@{object}InsertMap.sdl"/>
+	        <replacefilter token="_OUTPUT_SUCCESS_FILE_" value="@{basedir}/orgs/@{orgname}/data/@{object}Insert_success.csv"/>
+	        <replacefilter token="_OUTPUT_ERROR_FILE_" value="@{basedir}/orgs/@{orgname}/data/@{object}Insert_error.csv"/>
+	    	<replacefilter token="_EXTERNAL_ID_FIELD_" value="@{externalIdField}"/>
+	    	<replacefilter token="_PROCESS_NAME_" value="@{object}UpsertProcess"/>
+	    </replace>
+            <java classname="com.salesforce.dataloader.process.ProcessRunner" classpath="@{basedir}/lib/dataloader-@{dataLoaderAPIVersion}-uber.jar" failonerror="true">
+	        <sysproperty key="salesforce.config.dir" value="@{basedir}/orgs/@{orgname}/data"/>
+	        <arg line="process.name=upsertObject"/>
+	    </java>
+        </sequential>
+    </macrodef>
+
+    <macrodef name="sfExport">
+        <attribute name="object"/>
+	<attribute name="basedir"/>
+	<attribute name="orgname"/>
+	<attribute name="username"/>
+	<attribute name="password"/>
+	<attribute name="orgserver"/>
+	<attribute name="soql"/>
+	<attribute name="dataLoaderAPIVersion"/>
+
+        <sequential>
+            <echo message="Exporting @{object}"/>
+            <mkdir dir="@{basedir}/orgs/@{orgname}/data"/>
+            <copy file="@{basedir}/datascripts/template-export-process-conf.xml" tofile="@{basedir}/orgs/@{orgname}/data/process-conf.xml" overwrite="true" failonerror="true"/>
+            <replace file="@{basedir}/orgs/@{orgname}/data/process-conf.xml">
+                <replacefilter token="_ORGSERVER_" value="@{orgserver}"/>
+                <replacefilter token="_USERNAME_" value="@{username}"/>
+                <replacefilter token="_ENCRYPTED_PASSWORD_" value="@{password}"/>
+                <replacefilter token="_ENCRYPTION_KEY_FILE_" value="@{basedir}/datascripts/dataloader_encryption_key.txt"/>
+                <replacefilter token="_DEBUG_MSG_FILE_" value="@{basedir}/orgs/@{orgname}/data/debug.log"/>
+                <replacefilter token="_OBJECT_" value="@{object}"/>
+                <replacefilter token="_DATA_FILENAME_" value="@{basedir}/orgs/@{orgname}/data/@{object}Export.csv"/>
+                <replacefilter token="_MAPPING_FILE_" value="@{basedir}/datascripts/mappingfiles/@{object}ExportMap.sdl"/>
+                <replacefilter token="_OUTPUT_SUCCESS_FILE_" value="@{basedir}/orgs/@{orgname}/data/@{object}Export_success.csv"/>
+                <replacefilter token="_OUTPUT_ERROR_FILE_" value="@{basedir}/orgs/@{orgname}/data/@{object}Export_error.csv"/>
+                <replacefilter token="_EXTRACTION_SOQL_" value="@{soql}"/>
+            </replace>
+
+            <java classname="com.salesforce.dataloader.process.ProcessRunner" classpath="@{basedir}/lib/dataloader-@{dataLoaderAPIVersion}-uber.jar" failonerror="true">
+                <sysproperty key="salesforce.config.dir" value="@{basedir}/orgs/@{orgname}/data"/>
+                <arg line="process.name=exportObject"/>
+            </java>
+        </sequential>
+    </macrodef>
+
+    <target name="initDataDirectory" description="Removes and re-creates a blank data directory in orgs/${orgname}">
+        <delete dir="${basedir}/orgs/${orgname}/data"/>
+    </target>
+
+    <target name="exportData" description="Export Salesforce objects">
+        <sfExport object="${object}" orgserver="${sf.orgserver}" basedir="${basedir}" orgname="${orgname}" dataLoaderAPIVersion="${dataLoaderAPIVersion}" username="${sf.username}" password="${sf.passwordencrypted}" soql="${soql}" />
+    </target>
+
+    <target name="upsertData" description="Upsert Salesforce objects">
+        <sfUpsert object="${object}" orgserver="${sf.orgserver}" basedir="${basedir}" orgname="${orgname}" dataLoaderAPIVersion="${dataLoaderAPIVersion}" username="${sf.username}" password="${sf.passwordencrypted}" externalIdField="Load_ID__c" />
+    </target>
+
+    <target name="updateDataFiles" description="Refreshes the data files found in datascripts/datafiles from a specified org's data directory.  This expects the exportData target to have been run first to generate output CSV data load files.  Invoke with -Dorg=[org name, ex. asdevqa] to specify the org to copy files from." >
+        <copy todir="${basedir}/datascripts/datafiles">
+            <fileset dir="${basedir}/orgs/${org}/data" includes="**/*Export.csv"/>
+	    <mapper type="glob" from="*Export.csv" to="*Insert.csv"/>
+        </copy>
+    </target>
+
+</project>
